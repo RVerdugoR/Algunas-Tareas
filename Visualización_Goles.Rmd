@@ -1,0 +1,523 @@
+---
+title: "Tarea 2 Vizualización de Datos"
+author: "Rodrigo Verdugo Reyes"
+date: "1/8/2022"
+output:
+  pdf_document: default
+  word_document: default
+  html_document: default
+subtitle: Magister en Data Science
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+El objetivo de este trabajo es analizar y visualizar distintos patrones relacionados con los partidos de la Primera
+División del Fútbol Chileno desde 2008 a 2020.
+
+El dataset es PartidosChile1aDiv.csv y fue obtenido desde Kaggle: 
+
+<https://www.kaggle.com/clementeortuzar/resultados-primera-divisin-chile/version/6>
+
+
+1. Carga de Librerias
+```{r 1, include=TRUE, echo=FALSE}
+library(beeswarm)
+library(ggalt)
+library(plyr)
+library(tidyverse)
+library(dplyr)
+library(purrr)
+library(ggplot2)
+library(utils)
+library(ggthemes)
+library(viridis)
+library(purrr)
+library(ggridges)
+```
+
+
+2. carga de Datos
+```{r 2 Carga de Datos, include=TRUE, echo= TRUE, warning=FALSE}
+datos <- read_csv("PartidosChile1aDiv.csv")
+datos <- dplyr::rename(datos,Goles_loc = HS, Goles_vis = AS)
+head(datos, 10)
+ 
+```
+
+Donde:
+
+Date:Fecha en que se disputo el partido
+HT:Nombre Equipo Local del partido
+AT:Nombre Equipo Visita del partido
+HS:Goles del equipo Local
+AS:Goles del eauipo Visita
+
+
+
+
+En primer lugar, manejamos los datos. Debemos considerar que las **Victorias** otorgan 3 puntos, los **Empates** 1 punto y las **Derrotas**, 0 puntos. Ademas, incluiremos una columna que represente el año.
+
+
+```{r 3 Manejo de los datos, include=TRUE, echo=TRUE}
+
+Fecha <- as.Date(datos$Date, format = '%d/%m/%Y')
+Year  <- as.numeric(format(Fecha, '%Y'))
+
+ptos_local <- dplyr::if_else(datos$Goles_loc == datos$Goles_vis,1,
+                             dplyr::if_else(datos$Goles_loc>datos$Goles_vis,3,0))
+ptos_visita <- dplyr::if_else(datos$Goles_loc == datos$Goles_vis,1,
+                              dplyr::if_else(datos$Goles_loc<datos$Goles_vis,3,0))
+resultados <- dplyr::if_else(datos$Goles_loc == datos$Goles_vis,"Empate",
+                             dplyr::if_else(datos$Goles_loc>datos$Goles_vis,"Local","Visita"))
+datos <- datos %>% 
+         add_column(Year) %>% 
+         add_column(ptos_local) %>% 
+         add_column(ptos_visita) %>% 
+         add_column(resultados)
+
+head(datos,10)
+
+```
+
+
+#### **a)** *Visualizar N° de puntos obtenidos por cada equipo participante, tanto en número total de puntos como en puntos por partido*
+
+Reordenamos los datos para ajustar la informacion a la solicitud. Buscaremos agrupar los datos por equipo, mostrando su puntaje acumulado total y como se obtuvieron (local o visita)
+
+```{r 4 a, include=TRUE, echo=TRUE, warning=FALSE}
+
+datos_local <- datos %>% 
+               group_by(HT) %>% 
+               summarise(puntos_local = sum(ptos_local))
+datos_visita <- datos %>% 
+                group_by(AT) %>% 
+                summarise(puntos_visita = sum(ptos_visita))
+
+## Dejamos una sola tabla
+
+equipos_local <- datos_local %>% 
+                  rename(equipo = HT)
+equipos_visita <- datos_visita %>% 
+                  rename(equipo = AT)
+puntos_equipos <- right_join(equipos_local,equipos_visita, by = "equipo") 
+
+puntos_equipos <- puntos_equipos %>% 
+  mutate(total = puntos_local+puntos_visita) %>% 
+  arrange(desc(total))
+head(puntos_equipos,10)
+```
+
+Visualizamos los puntos, acumulados por equipo.
+
+```{r 5 Visualizacion a1, include=TRUE, echo=TRUE, warning=FALSE }
+
+viz1 <- ggplot(puntos_equipos, aes(x = reorder (equipo, -total), y = total))+
+        theme(panel.background = element_blank(),
+        axis.text.x = element_text(size = rel(0.9), angle = 90, hjust = 1, vjust = 0.5),
+        axis.text.y = element_blank(),
+        axis.ticks.y  = element_blank())+
+        geom_bar(width = 0.75,colour="blue", fill= "light gray" ,stat = "identity",
+           position = "dodge")+
+        geom_text(aes(label = total),size = rel(3), position = position_dodge(width = 0.9), 
+            vjust = -0.3) +
+        xlab("")+ylab("")+
+        labs(title = "Puntos Acumulados por Equipo", subtitle = "Jun 2008 - Abr 2021")+
+        theme(plot.title = element_text(size = 14, face = "bold", hjust = 0.5, 
+                                  margin = margin(b = 10)))+
+        theme(plot.subtitle = element_text(size = 11, face = "bold", hjust = 0.5, 
+                                  margin = margin(t=10, b=10) ))
+
+
+viz1
+
+```
+
+
+Podemos observar que la `Universidad Catolica` acumula la mayor cantidad de puntos en el periodo evaluado, seguido de la `Universidad de Chile` y `Colo-Colo`. A su vez, `Barnechea`, `Melipilla` y `Osorno` acumulan los mas bajos puntajes, lo que podria explicarse por su participacion esporadica en la primera division.
+
+Tambien se nos pide poder mostrar los puntos por partido. Aca se opto por agrupar los puntos de cada equipo por el promedio acumulado, obtenidos tanto de visita como de local. Para esto, se agrega una columna promedio de puntos por equipo, para lo cual tambien necesito saber cuantos partidos jugó cada equipo.
+
+```{r 6 Visualizacion a2, echo=TRUE, message=TRUE, warning=FALSE, include=TRUE}
+partidos_local <- datos %>% 
+  group_by(HT) %>% 
+  count(HT)
+partidos_visita <- datos %>% 
+  group_by(AT) %>% 
+  count(AT)
+
+partidos_local <- partidos_local %>% 
+  rename(equipo = HT) %>% 
+  rename (total_partidos = n)
+
+partidos_visita <- partidos_visita %>% 
+  rename(equipo = AT) %>% 
+  rename (total_partidos = n)
+total_partido <- inner_join(partidos_local, partidos_visita, by = "equipo")
+
+total_partido <- total_partido %>% 
+  rename (local = total_partidos.x) %>% 
+  rename (visita = total_partidos.y)
+
+puntos_partido <- total_partido%>% 
+  mutate(total_partidos = local + visita)
+
+partidos_puntos <- inner_join(puntos_partido,puntos_equipos, by ="equipo")
+partidos_puntos <- partidos_puntos %>%
+  mutate(prom_puntos = round((total/total_partidos),2)) %>% 
+  arrange(desc(prom_puntos))
+
+head(partidos_puntos, 10)
+
+```
+
+Ahora procedemos a visualizar la data arreglada. Para esto, usaremos los graficos de `Lolypop`.
+
+```{r 7 Visualizacion a2, include= TRUE, echo=TRUE, warning=FALSE }
+
+viz2<- ggplot(partidos_puntos, aes(x = reorder(equipo,-prom_puntos), y =  prom_puntos)) +
+  geom_segment(aes(x = reorder(equipo, -prom_puntos), xend = equipo, y = 0, yend = prom_puntos), 
+               color = "gray", lwd =1.5) +
+  geom_point(size = 7, pch = 21, bg = 4, col = 1)+
+  geom_text(aes(label = prom_puntos), color = "white", fontface = "bold",size = 2) +
+  scale_x_discrete(NULL) + 
+  scale_y_continuous("Promedio de Puntos") +
+  coord_flip()  +
+  theme_minimal()
+
+viz2
+
+```
+
+Nuevamente, vemos que el equipo que ha sido capaz de acumular un mayor promedio de puntos por partido, es la Universidad Catolica, con 1.86 puntos por partido, seguido de la Universidad de Chile, con 1.73, y Colo-Colo, con 1.72 puntos. 
+
+### **b)** *Diferencias en la distribución del n° de goles convertidos por el equipo local y visitante.*
+
+Manejaremos el dato de tal forma que podamos agrupar a los equipos y ordenarlos en funcion de sus goles convertidos como local y como visitante.
+
+```{r 8 b, include= TRUE, echo=TRUE, warning=FALSE}
+datos_goles_local <- datos %>% 
+  group_by(HT) %>% 
+  summarise(sum(Goles_loc)) %>% 
+  rename(equipo = HT)
+
+datos_goles_visita <- datos %>% 
+  group_by(AT) %>% 
+  summarise(sum(Goles_vis)) %>% 
+  rename(equipo = AT)
+
+total_goles <- inner_join(datos_goles_local,datos_goles_visita, by = "equipo") %>% 
+  rename(Goles_local = `sum(Goles_loc)`) %>% 
+  rename(Goles_visita =`sum(Goles_vis)`) %>% 
+  mutate(Goles_total = Goles_local+Goles_visita)
+
+head(total_goles,10)   
+```
+
+Procedemos a visualizar la data. Para esto, usaremos un grafico de Dumbell que nos permita ver los goles local y los goles visita convertidos por cada equipo en el periodo observado.
+
+```{r 9 b,include= TRUE, echo=TRUE, warning=FALSE }
+
+viz3 <- ggplot(total_goles,aes(x = Goles_visita ,xend = Goles_local, y = reorder(equipo, -Goles_total)))+
+        geom_dumbbell (color="#a3c4dc", size=0.75, point.colour.l="#0e668b") +
+        theme(plot.title = element_text(hjust=0.5, face="bold"),
+        plot.background=element_rect(fill="#f7f7f7"),
+        panel.background=element_rect(fill="#f7f7f7"),
+        panel.grid.minor=element_blank(),
+        panel.grid.major.y=element_blank(),
+        panel.grid.major.x=element_line(),
+        axis.ticks=element_blank(),
+        legend.position="top",
+        panel.border=element_blank())+
+        scale_x_continuous("Goles: Visita-Local") + 
+        scale_y_discrete(NULL)
+
+viz3
+
+```
+
+Sin embargo, la idea es ver la distribucion de goles Local y Goles visitas. Si bien en este grafico nos damos cuenta que los goles acumulados de local son mas que los de visita (lo cual resulta obvio), tambien podriamos visualizar los goles como un todo.
+
+Como el proposito es poder visualizar la distribucion de goles de cada tipo (local o visita), reordenaremos los datos para poder optar por una visualizacion apropiada.
+
+```{r 11 b,include= TRUE, echo=TRUE, warning=FALSE }
+count(total_goles, "Goles_local")
+## generamos una columna de 29 datos (Goles Local), y le asignamos esos datos.
+## vectorizamos Goles local y Goles de Visita
+local_score <- data.frame(Tipo_Gol =c(rep("Goles Local", 29)))
+goles1 <- data.frame(goles =(total_goles$Goles_local))
+local_score <- bind_cols(local_score, goles1) 
+
+Visit_score <- data.frame(Tipo_Gol =c(rep("Goles Visita", 29)))
+goles2 <- data.frame(goles =(total_goles$Goles_visita))
+Visit_score <- bind_cols(Visit_score, goles2)
+scores <- local_score %>% 
+  add_row(Visit_score)
+head(scores,10)
+
+```
+
+Ahora, realizamos una visualizacion de ambos grupos de goles (*local* y *visita*). Usaremos una combinacion de Boxplot y Violin plot para poder ver el rango de totalidad de goles, y donde existe una mayor densidad en cada grupo.
+
+```{r 12  b,include= TRUE, echo=TRUE, warning=FALSE }
+
+viz3.5 <- ggplot(scores, aes(x = Tipo_Gol, y = goles, fill = Tipo_Gol)) +
+  stat_boxplot(geom = "errorbar", width = 0.3, color = "black")+
+  geom_violin(alpha = 0.4,
+              colour = "lightgray", fill = "#838B83") +
+  theme(legend.position = "center",
+  plot.title = element_text(size = 18, face = "bold"),      
+  panel.grid.minor=element_blank(),
+  panel.grid.major.y= element_blank(),
+  panel.grid.major.x=element_line())  +
+  labs(x="", y="", title = "Total Goles")+
+  stat_summary(fun = "mean",  geom = "point", color = "red")+
+  geom_boxplot(notch = TRUE, aes(fill = Tipo_Gol ), fill = "#E0EEE0", alpha = 0.7)+
+  scale_color_viridis(option = "A") +
+  geom_point(alpha = 0.5, colour="#838B83")
+
+viz3.5
+
+```
+
+Como es de suponer, se observa una mayor cantidad de goles convertidos de local que de visita. El violin plot muestra que la distribucion es mas estable en los goles converstidos de local, mientras que es mas densa en la base (es decir, menos goles convertidos) para los goles convertidos de visita.
+
+
+### **c)** *Diferencias en la distribución del n° de goles del equipo ganador y perdedor.*
+
+
+```{r 13, echo=TRUE, warning=FALSE}
+gol_ganador_local <- datos %>% 
+  filter(resultados == "Local")
+gol_ganador_local <- data.frame(goles_ganador = (gol_ganador_local$Goles_loc))
+gol_ganador_visita <- datos %>% 
+  filter(resultados == "Visita")
+gol_ganador_visita <- data.frame(goles_ganador = (gol_ganador_visita$Goles_vis))
+count(gol_ganador_local,"goles_ganador" )
+count(gol_ganador_visita,"goles_ganador" )
+
+#vectorizamos y creamos DF
+
+ganador_local <- data.frame(score = c(rep("Goles ganador", 1633))) 
+goles3 <- data.frame(goles =(gol_ganador_local$goles_ganador))                     
+ganador_local <- bind_cols(ganador_local,goles3)
+ganador_visita <- data.frame(score = c(rep("Goles ganador", 1050)))
+goles4 <- data.frame(goles = (gol_ganador_visita$goles_ganador))
+ganador_visita <- bind_cols(ganador_visita,goles4)
+score_ganadores <- ganador_local %>% 
+  add_row(ganador_visita)  
+
+## Lo mismo, pero para los perdedores
+
+gol_perdedor_visita <- datos %>% 
+  filter(resultados == "Local")
+gol_perdedor_visita <- data.frame(score = (gol_perdedor_visita$Goles_vis))
+gol_perdedor_local <- datos %>% 
+  filter(resultados == "Visita")
+gol_perdedor_local<- data.frame(score = (gol_perdedor_local$Goles_loc))
+
+###armo df perdedores local
+perdedor_local <- data.frame (score = c(rep("Goles perdedor", 1050))) 
+goles5 <- data.frame(goles = (gol_perdedor_local$score))                     
+perdedor_local <- bind_cols(perdedor_local,goles5)
+###armo df perdedores visita
+perdedor_visita <- data.frame (score = c(rep("Goles perdedor", 1633))) 
+goles6 <- data.frame(goles = (gol_perdedor_visita$score))                     
+perdedor_visita <- bind_cols(perdedor_visita,goles6)
+###armo df con todos los goles, 2 columnas
+score <- score_ganadores %>% 
+  add_row(perdedor_local) %>% 
+  add_row(perdedor_visita)
+
+head(score, 10)
+
+```
+
+Ahora, visualizamos esta distribucion. Usaremos un boxplot
+
+```{r 14, warning=FALSE}
+
+viz4 <- ggplot(score, aes(x = score, y = goles)) +
+  stat_boxplot(geom = "errorbar", width = 0.2)+
+  geom_boxplot(fill = "#4271AE", colour = "#1F3552",
+               alpha = 0.9, outlier.colour = "red")+
+  scale_y_continuous(name = "Goles" ) +
+  scale_x_discrete(element_blank())+
+  theme(axis.line = element_line(colour = "black", 
+                                 size = 0.25)) 
+ 
+viz4
+
+```
+
+Se observa una notoria diferencia entre ambos grupos de goles. Los goles perdedor incluyen el 0, lo cual es la condicion *sine qua non* para perder un partido. Llama la atencion que existan partidos con un alto numero de goles para los perdedores, como se observa en los valores outlier de `Goles perdedor`. Al buscar que partido fue, observamos que el 25-01-2010, Audax Italiano cae por 5 goles contra 6 frente a Ñublense. El partido donde se convirtieron mas `Goles ganador`, ocurrio el 24-01-2016, donde la **Universidad de Chile** le convierte 8 goles a **O'Higgins**
+
+### **d**) *¿Cómo varían estas distribuciones en el período de años considerados?*
+
+Para visualizar esta informacion, usaremos un grafico Dumbell, para ver como se distribuyen los goles a traves de los años.
+
+En primera instancia, ordenaremos la data.
+
+```{r 15, echo=TRUE, include=TRUE, warning=FALSE}
+year_score_local <- datos %>% 
+  group_by(Year) %>% 
+  summarise(goles_local = sum(Goles_loc))
+year_score_visita <- datos %>% 
+  group_by(Year) %>% 
+  summarise(goles_visita = sum(Goles_vis))  
+year_score <- inner_join(year_score_local, year_score_visita, by =  "Year") 
+head(year_score,10)
+```
+
+Procedemos a realizar la visualizacion.
+
+```{r 16, echo=TRUE, include=TRUE, warning=FALSE} 
+
+theme_clean <- theme_bw(base_family="") + 
+  theme(legend.position = "top",
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10),
+        plot.title = element_text(size = 18, face = "bold"),
+        plot.subtitle = element_text(size = 12, face = "italic", margin = margin(b=12)),
+        plot.caption = element_text(size = 10),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        axis.ticks=element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = (element_text(color="#993333", size=10, face="bold")))
+
+        
+
+theme_set(theme_clean)
+viz5 <-   ggplot(year_score, aes(y = Year, x= goles_local, xend = goles_visita))+
+          geom_dumbbell (size_x = 3, size_xend = 3, color="#8AB0BD",
+                 colour_x = "#EE7523", colour_xend = "#6D3A5D",
+                 dot_guide=FALSE) +
+          geom_text(color="#6D3A5D", size=3, hjust=1.5,
+                  aes(x=goles_visita, label=goles_visita)) +
+          geom_text(color="#EE7523", size=3, hjust= -0.5,
+                  aes(x=goles_local, label=goles_local)) +
+          labs(x="", y="",
+              title = "Evolución de Goles",
+              subtitle = "Local y Visita, por Año",
+              caption = "Fuente: www.kaggle.com")
+
+viz5
+
+```
+
+Podemos observar que tanto los goles convertidos como local, como aquellos convertidos de visita, tuvieron su peak en el año 2011 y despues comienzan a bajar. Los años 2008 y 2021 no representan la totalidad de dichos periodos, por lo que se ven subrepresentados en el grafico.
+
+### **e**) *Para los partidos que terminan empatados, ¿cuántos goles convierte cada equipo?*
+
+En este caso, filtraremos los datos por empates tanto local como visita, y agruparemos por el promedio obtenido por equipo.
+
+```{r 17, echo = TRUE,include=TRUE}
+empate_local <- datos %>% 
+  filter(resultados == "Empate") %>% 
+  group_by(equipo = HT) %>% 
+  summarise(gol = Goles_loc)
+empate_visita <- datos %>% 
+  filter(resultados == "Empate") %>% 
+  group_by(equipo = AT) %>% 
+  summarise(gol = Goles_vis)
+datos_empate <- imap_dfr(empate_local,~as.data.frame(c(empate_visita)))
+empate <- datos_empate %>% 
+  group_by(equipo) %>% 
+  summarise(goles = round(mean(gol),2))
+
+head(datos_empate)
+
+
+
+```
+
+Visualizaremos usando  density plot de la libreria `ggridges`.
+
+```{r 18, echo=TRUE, include=TRUE, warning=FALSE}
+  viz6 <- ggplot(datos_empate, aes(x = gol, y = reorder(equipo,-gol))) +
+                   geom_density_ridges(aes(fill=equipo), alpha= 0.5, show.legend = FALSE)+
+                    labs(x = "Empates (Goles)",color = "blue", y = "", )+
+                  theme(legend.position = NULL,
+                        panel.grid.major = element_blank(),
+                        panel.grid.minor = element_blank(),)+
+                   theme_minimal()
+          
+  viz6
+  
+  
+
+```
+
+Vemos que en general, la mayoria de los empates se producen a 1 gol. Melipilla no registra empates, y Rangers presenta una mayor cantidad de empates a 2 goles.
+
+
+### *f)* **Bonus: Si un equipo gana un partido, qué probabilidad existe de que el siguiente gane, empate o pierda.**
+
+Para evaluar estas probabilidades, contaremos las oportunidades en que cada equipo gana y pierde, ya sea como local o visita, ademas de las veces que empata.
+
+```{r 19, include=TRUE, ECHO = TRUE}
+
+#contar veces que ganan
+gana_local <- datos %>% 
+              filter(resultados == "Local") %>% 
+              count(resultados == "Local")
+gana_visita <-datos %>% 
+              filter(resultados == "Visita") %>% 
+              count(resultados == "Visita")
+empates_local     <-datos %>% 
+              filter(resultados == "Empate") %>% 
+              count(resultados == "Empate")
+Resultado_ganan <- c(gana_local$n, gana_visita$n, empates_local$n) ##Resultados de local
+
+## contar veces que pierden
+
+pierde_local <- datos %>% 
+              filter(resultados == "Visita") %>% 
+              count(resultados == "Visita")
+pierde_visita <-datos %>% 
+              filter(resultados == "Local") %>% 
+              count(resultados == "Local")
+empates_visita     <-datos %>% 
+              filter(resultados == "Empate") %>% 
+              count(resultados == "Empate")
+              
+Resultado_pierden <- c(pierde_local$n, pierde_visita$n, empates_visita$n) ##Resultados de visita  
+
+Total_resultados <- gana_local$n+gana_visita$n+pierde_local$n+pierde_visita$n+empates_local$n+empates_visita$n
+          
+P_g <- (gana_local$n+gana_visita$n)/Total_resultados     ##Probabilidad de  ganar       
+P_p <- (pierde_local$n+pierde_visita$n)/Total_resultados  ## Probabilidad de perder  
+P_e <- (empates_local$n+empates_visita$n)/Total_resultados ## Probabilidad de empatar  
+  
+##Probabilidades independientes
+## P(p|g) = P(g|g)
+P_p_g <-  P_g*P_p 
+##Probabilidad de empatar dado que gana
+P_e_g <- P_g*P_e
+P_p_g
+P_e_g
+```
+
+Se aplica probabilidad condicional conociendo el numero de casos totales de cada evento, tomados de forma independiente. Se considera ademas que cada partido no condiciona el resultado siguiente, es decir, son independientes. Bajo esta logica, la posibilidad de ganar luego de perder es igual a la de perder luego de ganar (14%), y la probabilidad de empatar es de 9.5%.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
